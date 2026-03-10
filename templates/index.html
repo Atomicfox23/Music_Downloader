@@ -1,16 +1,68 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
-    <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MusicMaster</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
     <h1>Download Music</h1>
-    <form action="/link" method="post">
-        <input type="text" name="link" placeholder="Enter link" required>
-        <button type="submit">DOWNLOAD</button>
+    <form id="downloadForm" action="/link" method="post">
+      <input
+        type="text"
+        name="link"
+        placeholder="Enter link"
+        autocomplete="off"
+        required
+      />
+      <button type="submit">DOWNLOAD</button>
     </form>
-</body>
+    <h2>Downloaded Files:</h2>
+    <ul>
+      {% for file in downloads %}
+      <li>{{ file }}</li>
+      {% else %}
+      <li>No downloads yet</li>
+      {% endfor %}
+    </ul>
+
+    <div id="loading" style="display: none">
+      <p>Downloading... Please wait ⏳</p>
+      <input
+        type="range"
+        id="progressBar"
+        min="0"
+        max="100"
+        value="0"
+        disabled
+      />
+      <span id="progressPercent">0%</span>
+    </div>
+
+    <script>
+      const form = document.getElementById("downloadForm");
+      const loading = document.getElementById("loading");
+      const progressBar = document.getElementById("progressBar");
+      const progressPercent = document.getElementById("progressPercent");
+
+      form.addEventListener("submit", () => {
+        loading.style.display = "block";
+        const interval = setInterval(() => {
+          fetch("/progress")
+            .then((res) => res.json())
+            .then((data) => {
+              const progress = data.progress.toFixed(1);
+              progressBar.value = progress;
+              progressPercent.textContent = progress + "%";
+
+              if (progress >= 100) {
+                clearInterval(interval);
+                progressPercent.textContent = "Done!";
+              }
+            });
+        }, 100); // Poll every second
+      });
+    </script>
+  </body>
 </html>
