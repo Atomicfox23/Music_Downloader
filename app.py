@@ -9,7 +9,14 @@ app = Flask(__name__)
 
 destination = pathlib.Path.home() / "Downloads"
 download_history = []
-progress_data = {"progress": 0}
+progress_data = {
+    "progress": 0,
+    "current_item": 0,
+    "total_items": 0,
+    "current_title": "",
+    "is_playlist": False,
+    "completed_items": set()  # Track which items have been completed
+}
 ansi_escape = re.compile(r'\x1b\[([0-9]+)(;[0-9]+)*m')
 
 # YouTube Mix/Radio playlist IDs always start with these prefixes
@@ -51,14 +58,35 @@ def hook(d):
             progress_data["progress"] = float(clean_percent)
         except ValueError:
             pass
+        
+        # Update current title if available
+        if 'info_dict' in d:
+            title = d['info_dict'].get('title', '')
+            if title and title != progress_data["current_title"]:
+                # New item started - mark previous as complete
+                if progress_data["current_title"]:
+                    progress_data["completed_items"].add(progress_data["current_title"])
+                    progress_data["current_item"] = len(progress_data["completed_items"]) + 1
+                progress_data["current_title"] = title
+                progress_data["progress"] = 0
+            
     elif d['status'] == 'finished':
+        progress_data["progress"] = 100
+        # Mark current item as complete
+        if progress_data["current_title"]:
+            progress_data["completed_items"].add(progress_data["current_title"])
+            if progress_data["is_playlist"]:
+                progress_data["current_item"] = len(progress_data["completed_items"])
+    
+    elif d['status'] == 'processing':
+        # Keep progress at 100 during post-processing
         progress_data["progress"] = 100
 
 
 def make_ydl_opts(output_template):
     return {
         'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
-        'ffmpeg_location': 'C:\\Users\\kapan\\Downloads\\ffmpeg-8.0.1-essentials_build\\ffmpeg-8.0.1-essentials_build\\bin',
+        #'ffmpeg_location': 'C:\\Users\\kapan\\Downloads\\ffmpeg-8.0.1-essentials_build\\ffmpeg-8.0.1-essentials_build\\bin',
         'outtmpl': output_template,
         'updatetime': False,
         'progress_hooks': [hook],
@@ -95,7 +123,14 @@ def index():
 @app.post('/link')
 def download():
     raw_url = request.form['link'].strip()
+    
+    # Reset progress data
     progress_data["progress"] = 0
+    progress_data["current_item"] = 0
+    progress_data["total_items"] = 0
+    progress_data["current_title"] = ""
+    progress_data["is_playlist"] = False
+    progress_data["completed_items"] = set()  # Reset completed items tracking
 
     # Step 1: Detect and strip radio/mix playlists before doing anything else
     url, could_be_real_playlist = strip_playlist_if_radio(raw_url)
@@ -117,6 +152,10 @@ def download():
 
         if is_playlist:
             # ── REAL PLAYLIST → named subfolder ─────────────────────────────
+            progress_data["is_playlist"] = True
+            progress_data["total_items"] = len(info.get('entries', []))
+            progress_data["current_item"] = 1  # Start at 1
+            
             playlist_name = info.get('title') or info.get('playlist_title') or 'Playlist'
             safe_name = re.sub(r'[\\/:*?"<>|]', '_', playlist_name)
             output_template = os.path.join(str(destination), safe_name, '%(title)s.%(ext)s')
@@ -132,6 +171,10 @@ def download():
 
         else:
             # ── SINGLE VIDEO (or stripped mix) → straight into Downloads ────
+            progress_data["is_playlist"] = False
+            progress_data["total_items"] = 1
+            progress_data["current_item"] = 1
+            
             output_template = os.path.join(str(destination), '%(title)s.%(ext)s')
             opts = make_ydl_opts(output_template)
 
@@ -139,6 +182,8 @@ def download():
                 full_info = ydl.extract_info(url, download=True)
                 if full_info.get('entries'):
                     full_info = full_info['entries'][0]
+                
+                progress_data["current_title"] = full_info.get('title', '')
                 filename = ydl.prepare_filename(full_info)
                 final_file = os.path.splitext(filename)[0] + '.mp3'
                 download_history.append(os.path.basename(final_file))
@@ -147,12 +192,20 @@ def download():
         print(f"Download error: {e}")
         return f"<h3>Download failed:</h3><pre>{e}</pre><a href='/'>Go back</a>", 500
 
+    # Reset progress on completion
+    progress_data["progress"] = 100
     return redirect("/")
 
 
 @app.route('/progress')
 def get_progress():
-    return {"progress": progress_data["progress"]}
+    return {
+        "progress": progress_data["progress"],
+        "current_item": progress_data["current_item"],
+        "total_items": progress_data["total_items"],
+        "current_title": progress_data["current_title"],
+        "is_playlist": progress_data["is_playlist"]
+    }
 
 
 if __name__ == '__main__':

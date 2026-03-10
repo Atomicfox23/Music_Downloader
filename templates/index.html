@@ -3,52 +3,127 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MusicMaster</title>
+    <title>SoundMaster</title>
+    <link rel="icon" href="/static/note.png" />
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
-    <h1>Download Music</h1>
-    <form id="downloadForm" action="/link" method="post">
-      <input
-        type="text"
-        name="link"
-        placeholder="Enter link"
-        autocomplete="off"
-        required
-      />
-      <button type="submit">DOWNLOAD</button>
-    </form>
-    <h2>Downloaded Files:</h2>
-    <ul>
-      {% for file in downloads %}
-      <li>{{ file }}</li>
-      {% else %}
-      <li>No downloads yet</li>
-      {% endfor %}
-    </ul>
+    <!-- Corner coordinates decoration -->
+    <div class="coords">LAT:41.7151° N / LON:44.8271° E</div>
 
-    <div id="loading" style="display: none">
-      <p>Downloading... Please wait ⏳</p>
-      <input
-        type="range"
-        id="progressBar"
-        min="0"
-        max="100"
-        value="0"
-        disabled
-      />
-      <span id="progressPercent">0%</span>
-    </div>
+    <form id="downloadForm" action="/link" method="post">
+      <div class="card">
+        <!-- Status bar -->
+        <div class="status-bar">
+          <span>SYSTEM READY</span>
+          <span id="systemTime">--:--:--</span>
+        </div>
+
+        <!-- Title -->
+        <h1>Download Music</h1>
+
+        <!-- Input -->
+        <div class="input-wrapper">
+          <input
+            type="text"
+            name="link"
+            placeholder="PASTE URL HERE"
+            autocomplete="off"
+            required
+          />
+        </div>
+
+        <!-- Button -->
+        <button type="submit">INITIATE DOWNLOAD</button>
+
+        <!-- Loading section -->
+        <div id="loading" style="display: none">
+          <span id="loadingText">DOWNLOADING...</span>
+
+          <!-- Playlist info -->
+          <div
+            id="playlistInfo"
+            style="
+              display: none;
+              font-size: 0.75em;
+              color: var(--green-dim);
+              letter-spacing: 0.1em;
+            "
+          >
+            <span id="itemCounter">ITEM 0/0</span>
+          </div>
+
+          <!-- Current title -->
+          <div
+            id="currentTitle"
+            style="
+              display: none;
+              font-size: 0.7em;
+              color: rgba(0, 255, 60, 0.6);
+              letter-spacing: 0.05em;
+              text-align: center;
+              max-width: 100%;
+              overflow: hidden;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+            "
+          ></div>
+
+          <!-- Progress bar -->
+          <progress id="progressBar" max="100" value="0"></progress>
+          <span
+            id="progressPercent"
+            style="font-size: 0.8em; color: var(--green)"
+            >0%</span
+          >
+        </div>
+
+        <!-- Download history -->
+        {% if downloads %}
+        <div class="history">
+          {% for item in downloads[-5:] %}
+          <div class="history-item">{{ item }}</div>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+    </form>
 
     <script>
+      // Update system time
+      function updateTime() {
+        const now = new Date();
+        const time = now.toLocaleTimeString("en-US", { hour12: false });
+        document.getElementById("systemTime").textContent = time;
+      }
+      updateTime();
+      setInterval(updateTime, 1000);
+
+      // Form submission and progress tracking
       const form = document.getElementById("downloadForm");
       const loading = document.getElementById("loading");
       const progressBar = document.getElementById("progressBar");
       const progressPercent = document.getElementById("progressPercent");
+      const loadingText = document.getElementById("loadingText");
+      const playlistInfo = document.getElementById("playlistInfo");
+      const itemCounter = document.getElementById("itemCounter");
+      const currentTitle = document.getElementById("currentTitle");
 
-      form.addEventListener("submit", () => {
-        loading.style.display = "block";
-        const interval = setInterval(() => {
+      let progressInterval = null;
+
+      form.addEventListener("submit", (e) => {
+        loading.style.display = "flex";
+        progressBar.value = 0;
+        progressPercent.textContent = "0%";
+        playlistInfo.style.display = "none";
+        currentTitle.style.display = "none";
+
+        // Clear any existing interval
+        if (progressInterval) {
+          clearInterval(progressInterval);
+        }
+
+        progressInterval = setInterval(() => {
           fetch("/progress")
             .then((res) => res.json())
             .then((data) => {
@@ -56,12 +131,63 @@
               progressBar.value = progress;
               progressPercent.textContent = progress + "%";
 
-              if (progress >= 100) {
-                clearInterval(interval);
-                progressPercent.textContent = "Done!";
+              // Show playlist info if it's a playlist
+              if (data.is_playlist && data.total_items > 1) {
+                playlistInfo.style.display = "block";
+                itemCounter.textContent = `ITEM ${data.current_item}/${data.total_items}`;
+
+                const remaining = data.total_items - data.current_item;
+                if (remaining > 0 && progress < 100) {
+                  loadingText.textContent = `DOWNLOADING... (${remaining} REMAINING)`;
+                } else if (remaining > 0 && progress >= 100) {
+                  // Item finished, waiting for next
+                  loadingText.textContent = `PROCESSING... (${remaining} REMAINING)`;
+                } else if (
+                  remaining === 0 &&
+                  data.current_item === data.total_items
+                ) {
+                  loadingText.textContent = "FINALIZING LAST ITEM...";
+                }
+              } else {
+                playlistInfo.style.display = "none";
+                loadingText.textContent = "DOWNLOADING...";
               }
+
+              // Show current title
+              if (data.current_title) {
+                currentTitle.style.display = "block";
+                currentTitle.textContent = data.current_title;
+              }
+
+              // Check if download is complete
+              if (data.is_playlist) {
+                // For playlists: check if we've processed all items
+                if (data.current_item >= data.total_items && progress >= 100) {
+                  clearInterval(progressInterval);
+                  progressPercent.textContent = "COMPLETE";
+                  loadingText.textContent = "DOWNLOAD COMPLETE";
+
+                  setTimeout(() => {
+                    window.location.reload();
+                  }, 2000);
+                }
+              } else {
+                // For single videos: just check progress
+                if (progress >= 100) {
+                  clearInterval(progressInterval);
+                  progressPercent.textContent = "COMPLETE";
+                  loadingText.textContent = "DOWNLOAD COMPLETE";
+
+                  setTimeout(() => {
+                    window.location.reload();
+                  }, 2000);
+                }
+              }
+            })
+            .catch((err) => {
+              console.error("Progress fetch error:", err);
             });
-        }, 100); // Poll every second
+        }, 300); // Poll every 300ms for smoother updates
       });
     </script>
   </body>
